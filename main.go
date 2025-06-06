@@ -133,7 +133,7 @@ func main() {
 						}
 					case sdl.K_RETURN:
 						sampleText = insertAtRune(sampleText, cursorPos, "\n")
-						cursorPos++
+						cursorPos++ // Move cursor after the newline
 					case sdl.K_TAB:
 						sampleText = insertAtRune(sampleText, cursorPos, "    ")
 						cursorPos += 4
@@ -195,14 +195,13 @@ func main() {
 				}
 			}
 
-			if charCount == cursorPos {
-				cursorX = x
-				cursorY = y
-			}
-
+			y += int32(atlas.Size)
 			charCount += 1 // Account for the newline character
 
-			y += int32(atlas.Size)
+			if charCount == cursorPos {
+				cursorX = 10
+				cursorY = y
+			}
 		}
 
 		renderer.SetDrawColor(0, 0, 0, 255)
@@ -265,7 +264,7 @@ func moveCursorLineDown(cursorPos int, text string) int {
 	}
 
 	// Move down one line if possible
-	if lineIndex < len(lines) {
+	if lineIndex < len(lines)-1 {
 		return charCount + len(lines[lineIndex]) + 1 // +1 for newline character
 	}
 	return cursorPos // Already at the bottom line
@@ -297,10 +296,11 @@ func getCursorPosAtClick(mouseX, mouseY int32, text string, atlas *GlyphAtlas, r
 			}
 			_, _, w, _, _ := tx.Query()
 			w = int32(float64(w) / zoom)
+			y := int32(float64(atlas.Size) / zoom)
 
 			// Hit test for this glyph rectangle
-			if mouseX >= cursorX && mouseX < cursorX+int32(w) &&
-				mouseY >= cursorY && mouseY < cursorY+int32(atlas.Size) {
+			if mouseX >= cursorX && mouseX < cursorX+w &&
+				mouseY >= cursorY && mouseY < cursorY+y {
 				fmt.Println("Clicked on character:", char, "at index:", cursorIndex+i+1)
 				fmt.Println(mouseX, mouseY, cursorX, cursorY, w, atlas.Size)
 				return cursorIndex + i + 1
@@ -309,8 +309,14 @@ func getCursorPosAtClick(mouseX, mouseY int32, text string, atlas *GlyphAtlas, r
 			cursorX += int32(w)
 		}
 
+		// Check if the click was on the newline character
+		if mouseX >= cursorX && mouseY >= cursorY && mouseY < cursorY+int32(float64(atlas.Size)/zoom) {
+			fmt.Println("Clicked on newline at index:", cursorIndex+len(runes)+1)
+			return cursorIndex + len(runes) // +1 for the newline character
+		}
+
 		cursorIndex += len(runes) + 1 // +1 for '\n'
-		cursorY += int32(atlas.Size)
+		cursorY += int32(float64(atlas.Size) / zoom)
 	}
 
 	return len([]rune(text)) // Click was past the end
