@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/veandco/go-sdl2/sdl"
@@ -9,13 +10,17 @@ import (
 )
 
 const (
-	fontPath = "FiraCode-Regular.ttf"
-	fontSize = 16
+	fontPath    = "FiraCode-Regular.ttf"
+	fontSize    = 16
+	scrollSpeed = 10
 )
 
 var (
-	zoom      = 2.0
-	ligatures = []string{
+	zoom                = 2.0
+	scrollOffsetY int32 = 0
+	curCol              = 0
+	curRow              = 0
+	ligatures           = []string{
 		"->", "=>", "<-", "<=", "==", "!=", "&&", "||", "++", "--",
 	}
 )
@@ -42,6 +47,10 @@ func NewGlyphAtlas(renderer *sdl.Renderer, fontPath string, size int) *GlyphAtla
 }
 
 func (a *GlyphAtlas) GetTexture(s string, renderer *sdl.Renderer) *sdl.Texture {
+	if s == "\t" {
+		s = "    " // Replace tab with spaces
+	}
+
 	if tex, ok := a.Textures[s]; ok {
 		return tex
 	}
@@ -69,6 +78,18 @@ func (a *GlyphAtlas) Destroy() {
 }
 
 func main() {
+	sampleText := "Hello, High-DPI World!\nasdadasda"
+
+	if len(os.Args) > 1 {
+		filePath := os.Args[1]
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			fmt.Println("Error reading file:", err)
+			return
+		}
+		sampleText = string(data)
+	}
+
 	if err := sdl.Init(sdl.INIT_VIDEO); err != nil {
 		panic(err)
 	}
@@ -98,45 +119,62 @@ func main() {
 	atlas := NewGlyphAtlas(renderer, fontPath, int(float64(fontSize)*zoom))
 	defer atlas.Destroy()
 
-	sampleText := "Hello, High-DPI World!"
-	cursorPos := len(sampleText) // rune-based position
-
 	running := true
 	for running {
 		for event := sdl.PollEvent(); event != nil; event = sdl.PollEvent() {
 			switch e := event.(type) {
 			case *sdl.QuitEvent:
 				running = false
+			case *sdl.MouseWheelEvent:
+				scrollAmount := int32(e.Y) * int32(float64(atlas.Size)/2)
+				scrollOffsetY -= scrollAmount
+				fmt.Println("Scroll offset:", scrollOffsetY, "Scroll amount:", scrollAmount)
+				if scrollOffsetY < 0 {
+					scrollOffsetY = 0
+				}
 			case *sdl.MouseButtonEvent:
 				if e.Type == sdl.MOUSEBUTTONDOWN && e.Button == sdl.BUTTON_LEFT {
-					cursorPos = getCursorPosAtClick(e.X, e.Y, sampleText, atlas, renderer, 10, 10)
+					x, y := e.X, e.Y
+					x, y = GetRealMousePos(x, y, window, renderer)
+					y += scrollOffsetY // Adjust for scroll offset
+					curRow, curCol = GetRowColFromClick(x, y, sampleText, atlas, renderer)
+					fmt.Println("Cursor position set to row:", curRow, "col:", curCol)
 				}
 			case *sdl.KeyboardEvent:
 				if e.Type == sdl.KEYDOWN {
 					switch e.Keysym.Sym {
 					case sdl.K_BACKSPACE:
-						if cursorPos > 0 {
-							sampleText = deleteAtRune(sampleText, cursorPos-1)
-							cursorPos--
+						oldRow := strings.Split(sampleText, "\n")[curRow]
+						sampleText = deleteAtCursor(sampleText, curRow, curCol)
+						if curCol > 0 {
+							curCol--
+						} else if curRow > 0 {
+							curRow--
+							curCol = len(strings.Split(sampleText, "\n")[curRow]) - len(oldRow)
 						}
 					case sdl.K_UP:
-						cursorPos = moveCursorLineUp(cursorPos, sampleText)
+						if curRow > 0 {
+							curRow--
+						}
 					case sdl.K_DOWN:
-						cursorPos = moveCursorLineDown(cursorPos, sampleText)
+						if curRow < len(strings.Split(sampleText, "\n"))-1 {
+							curRow++
+						}
 					case sdl.K_LEFT:
-						if cursorPos > 0 {
-							cursorPos--
+						if curCol > 0 {
+							curCol--
 						}
 					case sdl.K_RIGHT:
-						if cursorPos < len(sampleText) {
-							cursorPos++
+						if curCol <= len(strings.Split(sampleText, "\n")[curRow])-1 {
+							curCol++
 						}
 					case sdl.K_RETURN:
-						sampleText = insertAtRune(sampleText, cursorPos, "\n")
-						cursorPos++ // Move cursor after the newline
+						sampleText = insertAtCursor(sampleText, "\n", curRow, curCol)
+						curRow++
+						curCol = 0
 					case sdl.K_TAB:
-						sampleText = insertAtRune(sampleText, cursorPos, "    ")
-						cursorPos += 4
+						sampleText = insertAtCursor(sampleText, "    ", curRow, curCol) // Insert 4 spaces for tab
+						curCol += 4
 					}
 				}
 				if e.Keysym.Sym == sdl.K_ESCAPE && e.State == sdl.PRESSED {
@@ -156,8 +194,8 @@ func main() {
 			case *sdl.TextInputEvent:
 				input := e.GetText()
 				if input != "" {
-					sampleText = insertAtRune(sampleText, cursorPos, input)
-					cursorPos += len(input)
+					sampleText = insertAtCursor(sampleText, input, curRow, curCol)
+					curCol += len(input)
 				}
 			}
 		}
@@ -165,16 +203,14 @@ func main() {
 		renderer.SetDrawColor(255, 255, 255, 255)
 		renderer.Clear()
 
-		y := int32(10)
+		y := int32(10) - scrollOffsetY
 		var cursorX, cursorY = int32(10), int32(10)
-		charCount := 0
 
-		for _, line := range strings.Split(sampleText, "\n") {
+		for row, line := range strings.Split(sampleText, "\n") {
 
 			x := int32(10)
 
 			for i := 0; i < len(line); i++ {
-				charCount++
 				s := string(line[i])
 				if i < len(line)-1 && contains(ligatures, line[i:i+2]) {
 					s = line[i : i+2]
@@ -186,22 +222,20 @@ func main() {
 					continue
 				}
 				_, _, w, h, _ := tx.Query()
+
 				renderer.Copy(tx, nil, &sdl.Rect{X: int32(x), Y: int32(y), W: w, H: h})
 				x += w
 
-				if charCount == cursorPos {
+				if i+1 == curCol && row == curRow {
 					cursorX = x
-					cursorY = y
 				}
 			}
 
-			y += int32(atlas.Size)
-			charCount += 1 // Account for the newline character
-
-			if charCount == cursorPos {
-				cursorX = 10
+			if row == curRow {
 				cursorY = y
 			}
+
+			y += int32(atlas.Size)
 		}
 
 		renderer.SetDrawColor(0, 0, 0, 255)
@@ -212,62 +246,44 @@ func main() {
 	}
 }
 
-func insertAtRune(s string, pos int, insert string) string {
-	runes := []rune(s)
-	if pos < 0 || pos > len(runes) {
-		return s
-	}
-	return string(runes[:pos]) + insert + string(runes[pos:])
-}
-
-func deleteAtRune(s string, pos int) string {
-	runes := []rune(s)
-	if pos < 0 || pos >= len(runes) {
-		return s
-	}
-	return string(runes[:pos]) + string(runes[pos+1:])
-}
-
-func moveCursorLineUp(cursorPos int, text string) int {
+func insertAtCursor(text string, input string, row, col int) string {
 	lines := strings.Split(text, "\n")
-	lineIndex := 0
-	charCount := 0
 
-	// Find the line index of the current cursor position
-	for i, line := range lines {
-		if charCount+len(line) >= cursorPos {
-			lineIndex = i
-			break
-		}
-		charCount += len(line) + 1 // +1 for newline character
+	if row < 0 || row >= len(lines) {
+		return text // Invalid row
 	}
 
-	// Move up one line if possible
-	if lineIndex > 0 {
-		return charCount - len(lines[lineIndex-1]) - 1 // -1 for newline character
+	line := lines[row]
+	if col < 0 || col > len(line) {
+		col = len(line) // Adjust to end of line if col is out of bounds
 	}
-	return cursorPos // Already at the top line
+
+	lines[row] = line[:col] + input + line[col:]
+	return strings.Join(lines, "\n")
 }
 
-func moveCursorLineDown(cursorPos int, text string) int {
+func deleteAtCursor(text string, row, col int) string {
 	lines := strings.Split(text, "\n")
-	lineIndex := 0
-	charCount := 0
 
-	// Find the line index of the current cursor position
-	for i, line := range lines {
-		if charCount+len(line) >= cursorPos {
-			lineIndex = i
-			break
+	if row < 0 || row >= len(lines) {
+		return text // Invalid row
+	}
+
+	line := lines[row]
+	if col < 0 || col >= len(line) {
+		return text // Invalid column
+	}
+
+	if col == 0 {
+		if row > 0 {
+			lines[row-1] += line // Merge with previous line
+			lines = append(lines[:row], lines[row+1:]...)
 		}
-		charCount += len(line) + 1 // +1 for newline character
+	} else {
+		lines[row] = line[:col-1] + line[col:] // Delete character at col
 	}
 
-	// Move down one line if possible
-	if lineIndex < len(lines)-1 {
-		return charCount + len(lines[lineIndex]) + 1 // +1 for newline character
-	}
-	return cursorPos // Already at the bottom line
+	return strings.Join(lines, "\n")
 }
 
 func contains(slice []string, item string) bool {
@@ -279,45 +295,53 @@ func contains(slice []string, item string) bool {
 	return false
 }
 
-func getCursorPosAtClick(mouseX, mouseY int32, text string, atlas *GlyphAtlas, renderer *sdl.Renderer, startX, startY int32) int {
-	lines := strings.Split(text, "\n")
-	cursorY := startY
-	cursorIndex := 0
+func GetRowColFromClick(x, y int32, sampleText string, atlas *GlyphAtlas, renderer *sdl.Renderer) (int, int) {
 
-	for _, line := range lines {
-		cursorX := startX
-		runes := []rune(line)
+	lines := strings.Split(sampleText, "\n")
 
-		for i, r := range runes {
-			char := string(r)
-			tx := atlas.GetTexture(char, renderer)
+	curX := int32(10)
+	curY := int32(10) // Starting Y position for the first line
+
+	row, col := 0, 0
+
+	for i, line := range lines {
+
+		curY = int32(10) + int32(i*atlas.Size)
+		row = i
+
+		for j, ch := range line {
+			col = j
+			tx := atlas.GetTexture(string(ch), renderer)
 			if tx == nil {
 				continue
 			}
-			_, _, w, _, _ := tx.Query()
-			w = int32(float64(w) / zoom)
-			y := int32(float64(atlas.Size) / zoom)
 
-			// Hit test for this glyph rectangle
-			if mouseX >= cursorX && mouseX < cursorX+w &&
-				mouseY >= cursorY && mouseY < cursorY+y {
-				fmt.Println("Clicked on character:", char, "at index:", cursorIndex+i+1)
-				fmt.Println(mouseX, mouseY, cursorX, cursorY, w, atlas.Size)
-				return cursorIndex + i + 1
+			_, _, w, _, _ := tx.Query()
+
+			if curX <= x && curX+w > x &&
+				curY <= y && curY+int32(atlas.Size) > y {
+				fmt.Println("x:", x, "curX:", curX, "y:", y, "curY:", curY, "w:", w, "col:", col)
+				return row, col + 1
 			}
 
-			cursorX += int32(w)
+			curX += w
 		}
 
-		// Check if the click was on the newline character
-		if mouseX >= cursorX && mouseY >= cursorY && mouseY < cursorY+int32(float64(atlas.Size)/zoom) {
-			fmt.Println("Clicked on newline at index:", cursorIndex+len(runes)+1)
-			return cursorIndex + len(runes) // +1 for the newline character
-		}
-
-		cursorIndex += len(runes) + 1 // +1 for '\n'
-		cursorY += int32(float64(atlas.Size) / zoom)
+		curX = int32(10) // Reset X for the next line
 	}
 
-	return len([]rune(text)) // Click was past the end
+	return row, col + 1 // Return -1, -1 if no valid position found
+}
+
+func GetRealMousePos(x, y int32, window *sdl.Window, renderer *sdl.Renderer) (int32, int32) {
+	winW, winH := window.GetSize()
+	renderW, renderH, _ := renderer.GetOutputSize()
+
+	scaleX := float32(renderW) / float32(winW)
+	scaleY := float32(renderH) / float32(winH)
+
+	realX := int32(float32(x) * scaleX)
+	realY := int32(float32(y) * scaleY)
+
+	return realX, realY
 }
