@@ -84,7 +84,7 @@ func (a *GlyphAtlas) Destroy() {
 }
 
 func main() {
-	sampleText := "Hello, High-DPI World!\nasdadasda"
+	bufferText := "Hello, High-DPI World!\nasdadasda"
 
 	if len(os.Args) > 1 {
 		filePath := os.Args[1]
@@ -93,7 +93,7 @@ func main() {
 			fmt.Println("Error reading file:", err)
 			return
 		}
-		sampleText = string(data)
+		bufferText = string(data)
 	}
 
 	if err := sdl.Init(sdl.INIT_VIDEO); err != nil {
@@ -143,27 +143,27 @@ func main() {
 					x, y := e.X, e.Y
 					x, y = GetRealMousePos(x, y, window, renderer)
 					y += scrollOffsetY // Adjust for scroll offset
-					curRow, curCol = GetRowColFromClick(x, y, sampleText, atlas, renderer)
-					fmt.Println("Cursor position set to row:", curRow, "col:", curCol)
+					curRow, curCol = GetRowColFromClick(x, y, bufferText, atlas, renderer)
+					// fmt.Println("Cursor position set to row:", curRow, "col:", curCol)
 				}
 			case *sdl.KeyboardEvent:
 				if e.Type == sdl.KEYDOWN {
 					switch e.Keysym.Sym {
 					case sdl.K_BACKSPACE:
-						oldRow := strings.Split(sampleText, "\n")[curRow]
-						sampleText = deleteAtCursor(sampleText, curRow, curCol)
+						oldRow := strings.Split(bufferText, "\n")[curRow]
+						bufferText = deleteAtCursor(bufferText, curRow, curCol)
 						if curCol > 0 {
 							curCol--
 						} else if curRow > 0 {
 							curRow--
-							curCol = len(strings.Split(sampleText, "\n")[curRow]) - len(oldRow)
+							curCol = len(strings.Split(bufferText, "\n")[curRow]) - len(oldRow)
 						}
 					case sdl.K_UP:
 						if curRow > 0 {
 							curRow--
 						}
 					case sdl.K_DOWN:
-						if curRow < len(strings.Split(sampleText, "\n"))-1 {
+						if curRow < len(strings.Split(bufferText, "\n"))-1 {
 							curRow++
 						}
 					case sdl.K_LEFT:
@@ -171,15 +171,15 @@ func main() {
 							curCol--
 						}
 					case sdl.K_RIGHT:
-						if curCol <= len(strings.Split(sampleText, "\n")[curRow])-1 {
+						if curCol <= len(strings.Split(bufferText, "\n")[curRow])-1 {
 							curCol++
 						}
 					case sdl.K_RETURN:
-						sampleText = insertAtCursor(sampleText, "\n", curRow, curCol)
+						bufferText = insertAtCursor(bufferText, "\n", curRow, curCol)
 						curRow++
 						curCol = 0
 					case sdl.K_TAB:
-						sampleText = insertAtCursor(sampleText, "    ", curRow, curCol) // Insert 4 spaces for tab
+						bufferText = insertAtCursor(bufferText, "    ", curRow, curCol) // Insert 4 spaces for tab
 						curCol += 4
 					}
 				}
@@ -200,8 +200,8 @@ func main() {
 			case *sdl.TextInputEvent:
 				input := e.GetText()
 				if input != "" {
-					sampleText = insertAtCursor(sampleText, input, curRow, curCol)
-					curCol += len(input)
+					bufferText = insertAtCursor(bufferText, input, curRow, curCol)
+					curCol += len([]rune(input))
 				}
 			}
 		}
@@ -212,15 +212,20 @@ func main() {
 		y := int32(10) - scrollOffsetY
 		var cursorX, cursorY = int32(10), int32(10)
 
-		for row, line := range strings.Split(sampleText, "\n") {
+		for row, line := range strings.Split(bufferText, "\n") {
 
 			x := int32(10)
 
-			for i := 0; i < len(line); i++ {
-				s := string(line[i])
-				if i < len(line)-1 && contains(ligatures, line[i:i+2]) {
-					s = line[i : i+2]
-					i++ // Skip the next character since it's part of the ligature
+			runes := []rune(line)
+			for i := 0; i < len(runes); i++ {
+				s := string(runes[i])
+
+				if i < len(runes)-1 {
+					pair := string(runes[i]) + string(runes[i+1])
+					if contains(ligatures, pair) {
+						s = pair
+						i++ // Skip next rune
+					}
 				}
 
 				tx := atlas.GetTexture(s, renderer)
@@ -270,18 +275,20 @@ func main() {
 }
 
 func insertAtCursor(text string, input string, row, col int) string {
-	lines := strings.Split(text, "\n")
+	lines := strings.Split(string(text), "\n")
 
 	if row < 0 || row >= len(lines) {
-		return text // Invalid row
+		return string(text) // Invalid row
 	}
 
 	line := lines[row]
-	if col < 0 || col > len(line) {
-		col = len(line) // Adjust to end of line if col is out of bounds
+	runes := []rune(line)
+
+	if col < 0 || col > len(runes) {
+		col = len(runes) // Adjust to end of line if col is out of bounds
 	}
 
-	lines[row] = line[:col] + input + line[col:]
+	lines[row] = string(runes[:col]) + string(input) + string(runes[col:])
 	return strings.Join(lines, "\n")
 }
 
@@ -332,7 +339,9 @@ func GetRowColFromClick(x, y int32, sampleText string, atlas *GlyphAtlas, render
 		curY = int32(10) + int32(i*atlas.Size)
 		row = i
 
-		for j, ch := range line {
+		runes := []rune(line)
+
+		for j, ch := range runes {
 			col = j
 			tx := atlas.GetTexture(string(ch), renderer)
 			if tx == nil {
