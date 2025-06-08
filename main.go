@@ -23,6 +23,8 @@ var (
 	ligatures           = []string{
 		"->", "=>", "<-", "<=", "==", "!=", "&&", "||", "++", "--",
 	}
+
+	rw int32
 )
 
 var (
@@ -122,6 +124,8 @@ func main() {
 	}
 	defer renderer.Destroy()
 
+	rw, _, _ = renderer.GetOutputSize()
+
 	atlas := NewGlyphAtlas(renderer, fontPath, int(float64(fontSize)*zoom))
 	defer atlas.Destroy()
 
@@ -132,7 +136,7 @@ func main() {
 			case *sdl.QuitEvent:
 				running = false
 			case *sdl.MouseWheelEvent:
-				scrollAmount := int32(e.Y) * int32(float64(atlas.Size)/2)
+				scrollAmount := int32(e.Y) * int32(float64(atlas.Size)/2) * 3
 				scrollOffsetY -= scrollAmount
 				fmt.Println("Scroll offset:", scrollOffsetY, "Scroll amount:", scrollAmount)
 				if scrollOffsetY < 0 {
@@ -234,16 +238,19 @@ func main() {
 				}
 				_, _, w, h, _ := tx.Query()
 
+				if x+w > rw-50 {
+					x = 10 // Reset to start of line if it exceeds window width
+					y += int32(atlas.Size)
+				}
+
 				renderer.Copy(tx, nil, &sdl.Rect{X: int32(x), Y: int32(y), W: w, H: h})
+
 				x += w
 
 				if i+1 == curCol && row == curRow {
 					cursorX = x
+					cursorY = y
 				}
-			}
-
-			if row == curRow {
-				cursorY = y
 			}
 
 			y += int32(atlas.Size)
@@ -266,11 +273,15 @@ func main() {
 			_, _, w, h, _ := fpsTexture.Query()
 			rw, _, _ := renderer.GetOutputSize()
 			fpsX := rw - w - 10 // 10 pixels from the right edge
+			// white background for FPS text
+			rect := sdl.Rect{X: fpsX - 5, Y: 5, W: w + 10, H: h + 5}
+			renderer.SetDrawColor(255, 255, 255, 200)
+			renderer.FillRect(&rect)
 			renderer.Copy(fpsTexture, nil, &sdl.Rect{X: fpsX, Y: 10, W: w, H: h})
 		}
 
 		renderer.Present()
-		sdl.Delay(8)
+		sdl.Delay(4)
 	}
 }
 
@@ -300,17 +311,19 @@ func deleteAtCursor(text string, row, col int) string {
 	}
 
 	line := lines[row]
-	if col < 0 || col >= len(line) {
+	runes := []rune(line)
+
+	if col < 0 || col >= len(runes) {
 		return text // Invalid column
 	}
 
 	if col == 0 {
 		if row > 0 {
-			lines[row-1] += line // Merge with previous line
+			lines[row-1] += string(runes) // Merge with previous line
 			lines = append(lines[:row], lines[row+1:]...)
 		}
 	} else {
-		lines[row] = line[:col-1] + line[col:] // Delete character at col
+		lines[row] = string(runes[:col-1]) + string(runes[col:]) // Delete character at col
 	}
 
 	return strings.Join(lines, "\n")
@@ -336,7 +349,6 @@ func GetRowColFromClick(x, y int32, sampleText string, atlas *GlyphAtlas, render
 
 	for i, line := range lines {
 
-		curY = int32(10) + int32(i*atlas.Size)
 		row = i
 
 		runes := []rune(line)
@@ -350,15 +362,21 @@ func GetRowColFromClick(x, y int32, sampleText string, atlas *GlyphAtlas, render
 
 			_, _, w, _, _ := tx.Query()
 
+			if curX+w > rw-50 {
+				curX = int32(10) // Reset X for the next line
+				curY += int32(atlas.Size)
+			}
+
 			if curX <= x && curX+w > x &&
 				curY <= y && curY+int32(atlas.Size) > y {
-				fmt.Println("x:", x, "curX:", curX, "y:", y, "curY:", curY, "w:", w, "col:", col)
+				fmt.Println("x:", x, "curX:", curX, "y:", y, "curY:", curY, "w:", w, "col:", col, "string(ch):", string(ch))
 				return row, col + 1
 			}
 
 			curX += w
 		}
 
+		curY += int32(atlas.Size)
 		curX = int32(10) // Reset X for the next line
 	}
 
