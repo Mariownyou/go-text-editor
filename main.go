@@ -25,6 +25,12 @@ var (
 	}
 )
 
+var (
+	frameCount    = 0
+	fps           = 0
+	lastFPSUpdate = sdl.GetTicks64()
+)
+
 type GlyphAtlas struct {
 	Textures map[string]*sdl.Texture
 	Font     *ttf.Font
@@ -240,6 +246,23 @@ func main() {
 
 		renderer.SetDrawColor(0, 0, 0, 255)
 		renderer.FillRect(&sdl.Rect{X: cursorX, Y: cursorY, W: 4, H: int32(atlas.Size)})
+
+		frameCount++
+		currentTime := sdl.GetTicks64()
+		if currentTime-lastFPSUpdate >= 1000 {
+			fps = frameCount
+			frameCount = 0
+			lastFPSUpdate = currentTime
+		}
+
+		fpsText := fmt.Sprintf("FPS: %d", fps)
+		fpsTexture := atlas.GetTexture(fpsText, renderer)
+		if fpsTexture != nil {
+			_, _, w, h, _ := fpsTexture.Query()
+			rw, _, _ := renderer.GetOutputSize()
+			fpsX := rw - w - 10 // 10 pixels from the right edge
+			renderer.Copy(fpsTexture, nil, &sdl.Rect{X: fpsX, Y: 10, W: w, H: h})
+		}
 
 		renderer.Present()
 		sdl.Delay(8)
