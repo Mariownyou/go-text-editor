@@ -37,6 +37,7 @@ var (
 )
 
 var cursorManager = NewCursorManager()
+var isDragging = false
 
 func main() {
 	bufferText := "Hello, High-DPI World!\nasdadasda"
@@ -98,13 +99,57 @@ func main() {
 					targetScrollOffsetY = 0
 				}
 			case *sdl.MouseButtonEvent:
-				if e.Type == sdl.MOUSEBUTTONDOWN && e.Button == sdl.BUTTON_LEFT {
-					primary := cursorManager.GetPrimary()
+				if e.Button != sdl.BUTTON_LEFT {
+					continue // Only handle left mouse button events
+				}
+
+				x, y := e.X, e.Y
+				x, y = GetRealMousePos(x, y, window, renderer)
+				y += scrollOffsetY // Adjust for scroll offset
+				row, col := GetRowColFromClick(x, y, bufferText, atlas, renderer)
+				primary := cursorManager.GetPrimary()
+
+				if e.Type == sdl.MOUSEBUTTONDOWN {
+					if !primary.Selection.Active {
+						// Start new selection from current cursor position
+						primary.Selection.StartRow = row
+						primary.Selection.StartCol = col
+					}
+					primary.Row, primary.Col = row, col
+				} else if e.Type == sdl.MOUSEBUTTONUP {
+					// If we dragged, finalize the selection
+					if !isDragging {
+						cursorManager.ClearAllSelections()
+						primary.Selection.Active = false
+					}
+
+					if primary.Selection.Active && (primary.Selection.StartRow != row || primary.Selection.StartCol != col) {
+						primary.Selection.EndRow = row
+						primary.Selection.EndCol = col
+					}
+				}
+			case *sdl.MouseMotionEvent:
+				if e.State == sdl.PRESSED {
+					isDragging = true
+				} else {
+					isDragging = false
+				}
+
+				if isDragging {
 					x, y := e.X, e.Y
 					x, y = GetRealMousePos(x, y, window, renderer)
-					y += scrollOffsetY // Adjust for scroll offset
+					y += scrollOffsetY
 					row, col := GetRowColFromClick(x, y, bufferText, atlas, renderer)
-					primary.Row, primary.Col = row, col
+
+					primary := cursorManager.GetPrimary()
+					primary.Selection.Active = true
+					if primary.Selection.StartRow != row || primary.Selection.StartCol != col {
+						primary.Selection.Active = true
+						primary.Selection.EndRow = row
+						primary.Selection.EndCol = col
+						primary.Row = row
+						primary.Col = col
+					}
 				}
 			case *sdl.KeyboardEvent:
 				if e.Type == sdl.KEYDOWN {
