@@ -293,8 +293,8 @@ func RenderTextWithSelection(renderer *sdl.Renderer, atlas *GlyphAtlas, text str
 			_, _, w, h, _ := tx.Query()
 
 			if x+w > rw-50 {
-				x = 10 // Reset to start of line if it exceeds window width
-				y += int32(atlas.Size)
+				x = 10                                // Reset to start of line if it exceeds window width
+				y += int32(atlas.Size + atlas.Size/3) // Move to next line
 			}
 
 			cm.SetRenderPos(row, i, x, y)
@@ -307,7 +307,7 @@ func RenderTextWithSelection(renderer *sdl.Renderer, atlas *GlyphAtlas, text str
 
 		cm.SetRenderPos(row, chars+1, x, y)
 
-		y += int32(atlas.Size)
+		y += int32(atlas.Size + atlas.Size/3) // Move to next line
 	}
 
 	RenderCursors(renderer, atlas, cm)
@@ -416,12 +416,12 @@ func GetRowColFromClick(x, y int32, sampleText string, atlas *GlyphAtlas, render
 			_, _, w, _, _ := tx.Query()
 
 			if curX+w > rw-50 {
-				curX = int32(10) // Reset X for the next line
-				curY += int32(atlas.Size)
+				curX = int32(10)                         // Reset X for the next line
+				curY += int32(atlas.Size + atlas.Size/3) // Move to next line
 			}
 
 			if curX <= x && curX+w > x &&
-				curY <= y && curY+int32(atlas.Size) > y {
+				curY <= y && curY+int32(atlas.Size+atlas.Size/3) > y {
 				fmt.Println("x:", x, "curX:", curX, "y:", y, "curY:", curY, "w:", w, "col:", col, "string(ch):", string(ch))
 				return row, col
 			}
@@ -430,13 +430,13 @@ func GetRowColFromClick(x, y int32, sampleText string, atlas *GlyphAtlas, render
 		}
 
 		if curX < x && curY <= y &&
-			curY+int32(atlas.Size) > y {
+			curY+int32(atlas.Size+atlas.Size/3) > y {
 			fmt.Println("x:", x, "curX:", curX, "y:", y, "curY:", curY, "col:", col+1)
 			return row, len(runes) + 1 // Return the end of the line
 		}
 
-		curY += int32(atlas.Size)
-		curX = int32(10) // Reset X for the next line
+		curY += int32(atlas.Size + atlas.Size/3) // Move to next line
+		curX = int32(10)                         // Reset X for the next line
 	}
 
 	return row, col // Return -1, -1 if no valid position found
