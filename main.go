@@ -179,42 +179,20 @@ func main() {
 						}
 					case sdl.K_UP:
 						if primary.Row > 0 {
-							r := strings.Split(bufferText, "\n")[primary.Row-1]
-							ol := len([]rune(r))
 							primary.Row--
-							if ol == 0 {
-								primary.Col = 1
-							} else {
-								primary.Col = 0
-							}
+							primary.Col = 0 // Reset column to 0 when moving up
 						}
 					case sdl.K_DOWN:
 						if primary.Row < len(strings.Split(bufferText, "\n"))-1 {
-							r := strings.Split(bufferText, "\n")[primary.Row+1]
-							ol := len([]rune(r))
 							primary.Row++
-							if ol == 0 {
-								primary.Col = 1
-							} else {
-								primary.Col = 0
-							}
+							primary.Col = 0 // Reset column to 0 when moving down
 						}
 					case sdl.K_LEFT:
 						if primary.Col > 0 {
-							r := strings.Split(bufferText, "\n")[primary.Row]
-							ol := len([]rune(r))
-							if ol+1 == primary.Col {
-								primary.Col--
-							}
 							primary.Col--
 						}
 					case sdl.K_RIGHT:
 						if primary.Col <= len([]rune(strings.Split(bufferText, "\n")[primary.Row]))-1 {
-							r := strings.Split(bufferText, "\n")[primary.Row]
-							ol := len([]rune(r))
-							if ol-1 == primary.Col {
-								primary.Col++
-							}
 							primary.Col++
 						}
 					case sdl.K_RETURN:
