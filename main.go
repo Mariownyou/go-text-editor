@@ -92,6 +92,11 @@ func main() {
 			switch e := event.(type) {
 			case *sdl.QuitEvent:
 				running = false
+			case *sdl.WindowEvent:
+				if e.Event == sdl.WINDOWEVENT_RESIZED || e.Event == sdl.WINDOWEVENT_SIZE_CHANGED {
+					// Update renderer size
+					rw, _, _ = renderer.GetOutputSize()
+				}
 			case *sdl.MouseWheelEvent:
 				scrollAmount := float32(e.Y) * float32(atlas.Size) * scrollSpeed // adjust multiplier to taste
 				targetScrollOffsetY -= scrollAmount
@@ -156,26 +161,22 @@ func main() {
 					primary := cursorManager.GetPrimary()
 					switch e.Keysym.Sym {
 					case sdl.K_BACKSPACE:
-						oldRow := strings.Split(bufferText, "\n")[primary.Row]
-						ol := len([]rune(oldRow))
-						if ol+1 == primary.Col {
-							bufferText = deleteFromEndOfLine(bufferText, primary.Row)
-							if ol == 0 {
-								primary.Row--
-								primary.Col = len([]rune(strings.Split(bufferText, "\n")[primary.Row])) + 1
-							} else {
-								primary.Col--
-							}
-						} else {
-							bufferText = deleteAtCursor(bufferText, primary.Row, primary.Col)
-							if primary.Col > 0 {
-								primary.Col--
-							} else if primary.Row > 0 {
-								primary.Row--
-								primary.Col = len([]rune(strings.Split(bufferText, "\n")[primary.Row])) - ol
-							}
+						if cursorManager.HasSelection() {
+							bufferText = DeleteSelectedText(bufferText, cursorManager)
+							cursorManager.ClearAllSelections()
+							continue
 						}
-
+						or := strings.Split(bufferText, "\n")[primary.Row]
+						ol := len([]rune(or))
+						bufferText = deleteAtCursor(bufferText, primary.Row, primary.Col)
+						if primary.Col > 0 {
+							primary.Col--
+						} else {
+							nr := strings.Split(bufferText, "\n")[primary.Row-1]
+							nl := len([]rune(nr))
+							primary.Row--
+							primary.Col = nl - ol
+						}
 					case sdl.K_UP:
 						if primary.Row > 0 {
 							r := strings.Split(bufferText, "\n")[primary.Row-1]
@@ -324,8 +325,8 @@ func RenderTextWithSelection(renderer *sdl.Renderer, atlas *GlyphAtlas, text str
 			if isSelected {
 				tx := atlas.GetTexture(s, renderer)
 				if tx != nil {
-					_, _, w, h, _ := tx.Query()
-					selectionRect := sdl.Rect{X: x, Y: y, W: w, H: h}
+					_, _, w, _, _ := tx.Query()
+					selectionRect := sdl.Rect{X: x, Y: y, W: w, H: int32(atlas.Size + atlas.Size/3)}
 					renderer.SetDrawColor(173, 216, 230, 128) // Light blue selection
 					renderer.FillRect(&selectionRect)
 				}
@@ -350,7 +351,7 @@ func RenderTextWithSelection(renderer *sdl.Renderer, atlas *GlyphAtlas, text str
 			x += w
 		}
 
-		cm.SetRenderPos(row, chars+1, x, y)
+		cm.SetRenderPos(row, chars, x, y)
 
 		y += int32(atlas.Size + atlas.Size/3) // Move to next line
 	}
@@ -411,7 +412,7 @@ func deleteAtCursor(text string, row, col int) string {
 	line := lines[row]
 	runes := []rune(line)
 
-	if col < 0 || col >= len(runes) {
+	if col < 0 || col > len(runes) {
 		return text // Invalid column
 	}
 
@@ -451,6 +452,17 @@ func GetRowColFromClick(x, y int32, sampleText string, atlas *GlyphAtlas, render
 
 		runes := []rune(line)
 
+		// handle empty lines or end of lines
+		if len(runes) == 0 {
+			if curY <= y && curY+int32(atlas.Size+atlas.Size/3) > y {
+				fmt.Println("Empty line clicked at row:", row, "col:", col)
+				return row, 0 // Return column 0 for empty lines
+			}
+			curY += int32(atlas.Size + atlas.Size/3) // Move to next line
+			curX = int32(10)                         // Reset X for the next line
+			continue
+		}
+
 		for j, ch := range runes {
 			col = j
 			tx := atlas.GetTexture(string(ch), renderer)
@@ -474,15 +486,17 @@ func GetRowColFromClick(x, y int32, sampleText string, atlas *GlyphAtlas, render
 			curX += w
 		}
 
-		if curX < x && curY <= y &&
-			curY+int32(atlas.Size+atlas.Size/3) > y {
-			fmt.Println("x:", x, "curX:", curX, "y:", y, "curY:", curY, "col:", col+1)
-			return row, len(runes) + 1 // Return the end of the line
+		// handle row click but no col
+		if curY <= y && curY+int32(atlas.Size+atlas.Size/3) > y {
+			fmt.Println("Row clicked at row:", row, "col:", col)
+			return row, col + 1 // Return column 0 for row click
 		}
 
 		curY += int32(atlas.Size + atlas.Size/3) // Move to next line
 		curX = int32(10)                         // Reset X for the next line
 	}
+
+	fmt.Println("No valid position found for click at x:", x, "y:", y)
 
 	return row, col // Return -1, -1 if no valid position found
 }

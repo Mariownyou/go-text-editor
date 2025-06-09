@@ -119,6 +119,9 @@ func DeleteSelectedText(text string, cm *CursorManager) string {
 		// Single line deletion
 		line := lines[startRow]
 		runes := []rune(line)
+		if endCol > len(runes) {
+			endCol = len(runes)
+		}
 		if startCol < len(runes) && endCol <= len(runes) {
 			lines[startRow] = string(runes[:startCol]) + string(runes[endCol:])
 		}
