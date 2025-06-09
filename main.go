@@ -219,13 +219,8 @@ func main() {
 						}
 					case sdl.K_RETURN:
 						bufferText = insertAtCursor(bufferText, "\n", primary.Row, primary.Col)
-						r := strings.Split(bufferText, "\n")[primary.Row+1]
-						ol := len([]rune(r))
 						primary.Row++
 						primary.Col = 0
-						if ol == 0 {
-							primary.Col = 1
-						}
 					case sdl.K_TAB:
 						bufferText = insertAtCursor(bufferText, "    ", primary.Row, primary.Col) // Insert 4 spaces for tab
 						primary.Col += 4
