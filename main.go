@@ -33,57 +33,7 @@ var (
 	lastFPSUpdate = sdl.GetTicks64()
 )
 
-type GlyphAtlas struct {
-	Textures map[string]*sdl.Texture
-	Font     *ttf.Font
-	Size     int
-}
-
-func NewGlyphAtlas(renderer *sdl.Renderer, fontPath string, size int) *GlyphAtlas {
-	font, err := ttf.OpenFont(fontPath, size)
-	if err != nil {
-		panic(err)
-	}
-
-	atlas := &GlyphAtlas{
-		Textures: make(map[string]*sdl.Texture),
-		Font:     font,
-		Size:     size,
-	}
-
-	return atlas
-}
-
-func (a *GlyphAtlas) GetTexture(s string, renderer *sdl.Renderer) *sdl.Texture {
-	if s == "\t" {
-		s = "    " // Replace tab with spaces
-	}
-
-	if tex, ok := a.Textures[s]; ok {
-		return tex
-	}
-
-	surf, err := a.Font.RenderUTF8Blended(s, sdl.Color{0, 0, 0, 255})
-	if err != nil {
-		return nil
-	}
-	defer surf.Free()
-
-	tx, err := renderer.CreateTextureFromSurface(surf)
-	if err != nil {
-		return nil
-	}
-
-	a.Textures[s] = tx
-	return tx
-}
-
-func (a *GlyphAtlas) Destroy() {
-	for _, tex := range a.Textures {
-		tex.Destroy()
-	}
-	a.Font.Close()
-}
+var cursorManager = NewCursorManager()
 
 func main() {
 	bufferText := "Hello, High-DPI World!\nasdadasda"
@@ -113,6 +63,9 @@ func main() {
 		panic(err)
 	}
 	defer window.Destroy()
+
+	// set cursor to selection
+	sdl.SetCursor(sdl.CreateSystemCursor(sdl.SYSTEM_CURSOR_IBEAM))
 
 	// set white background
 	r, _ := window.GetRenderer()
@@ -144,44 +97,87 @@ func main() {
 				}
 			case *sdl.MouseButtonEvent:
 				if e.Type == sdl.MOUSEBUTTONDOWN && e.Button == sdl.BUTTON_LEFT {
+					primary := cursorManager.GetPrimary()
 					x, y := e.X, e.Y
 					x, y = GetRealMousePos(x, y, window, renderer)
 					y += scrollOffsetY // Adjust for scroll offset
-					curRow, curCol = GetRowColFromClick(x, y, bufferText, atlas, renderer)
-					// fmt.Println("Cursor position set to row:", curRow, "col:", curCol)
+					row, col := GetRowColFromClick(x, y, bufferText, atlas, renderer)
+					primary.Row, primary.Col = row, col
 				}
 			case *sdl.KeyboardEvent:
 				if e.Type == sdl.KEYDOWN {
+					primary := cursorManager.GetPrimary()
 					switch e.Keysym.Sym {
 					case sdl.K_BACKSPACE:
-						oldRow := strings.Split(bufferText, "\n")[curRow]
-						bufferText = deleteAtCursor(bufferText, curRow, curCol)
-						if curCol > 0 {
-							curCol--
-						} else if curRow > 0 {
-							curRow--
-							curCol = len(strings.Split(bufferText, "\n")[curRow]) - len(oldRow)
+						oldRow := strings.Split(bufferText, "\n")[primary.Row]
+						ol := len([]rune(oldRow))
+						if ol+1 == primary.Col {
+							bufferText = deleteFromEndOfLine(bufferText, primary.Row)
+							if ol == 0 {
+								primary.Row--
+								primary.Col = len([]rune(strings.Split(bufferText, "\n")[primary.Row])) + 1
+							} else {
+								primary.Col--
+							}
+						} else {
+							bufferText = deleteAtCursor(bufferText, primary.Row, primary.Col)
+							if primary.Col > 0 {
+								primary.Col--
+							} else if primary.Row > 0 {
+								primary.Row--
+								primary.Col = len([]rune(strings.Split(bufferText, "\n")[primary.Row])) - ol
+							}
 						}
+
 					case sdl.K_UP:
-						if curRow > 0 {
-							curRow--
+						if primary.Row > 0 {
+							r := strings.Split(bufferText, "\n")[primary.Row-1]
+							ol := len([]rune(r))
+							primary.Row--
+							if ol == 0 {
+								primary.Col = 1
+							} else {
+								primary.Col = 0
+							}
 						}
 					case sdl.K_DOWN:
-						if curRow < len(strings.Split(bufferText, "\n"))-1 {
-							curRow++
+						if primary.Row < len(strings.Split(bufferText, "\n"))-1 {
+							r := strings.Split(bufferText, "\n")[primary.Row+1]
+							ol := len([]rune(r))
+							primary.Row++
+							if ol == 0 {
+								primary.Col = 1
+							} else {
+								primary.Col = 0
+							}
 						}
 					case sdl.K_LEFT:
-						if curCol > 0 {
-							curCol--
+						if primary.Col > 0 {
+							r := strings.Split(bufferText, "\n")[primary.Row]
+							ol := len([]rune(r))
+							if ol+1 == primary.Col {
+								primary.Col--
+							}
+							primary.Col--
 						}
 					case sdl.K_RIGHT:
-						if curCol <= len(strings.Split(bufferText, "\n")[curRow])-1 {
-							curCol++
+						if primary.Col <= len([]rune(strings.Split(bufferText, "\n")[curRow]))-1 {
+							r := strings.Split(bufferText, "\n")[primary.Row]
+							ol := len([]rune(r))
+							if ol-1 == primary.Col {
+								primary.Col++
+							}
+							primary.Col++
 						}
 					case sdl.K_RETURN:
-						bufferText = insertAtCursor(bufferText, "\n", curRow, curCol)
-						curRow++
-						curCol = 0
+						bufferText = insertAtCursor(bufferText, "\n", primary.Row, primary.Col)
+						r := strings.Split(bufferText, "\n")[primary.Row+1]
+						ol := len([]rune(r))
+						primary.Row++
+						primary.Col = 0
+						if ol == 0 {
+							primary.Col = 1
+						}
 					case sdl.K_TAB:
 						bufferText = insertAtCursor(bufferText, "    ", curRow, curCol) // Insert 4 spaces for tab
 						curCol += 4
@@ -204,60 +200,22 @@ func main() {
 			case *sdl.TextInputEvent:
 				input := e.GetText()
 				if input != "" {
-					bufferText = insertAtCursor(bufferText, input, curRow, curCol)
-					curCol += len([]rune(input))
+					primary := cursorManager.GetPrimary()
+					if cursorManager.HasSelection() {
+						bufferText = DeleteSelectedText(bufferText, cursorManager)
+						cursorManager.ClearAllSelections()
+					}
+					bufferText = insertAtCursor(bufferText, input, primary.Row, primary.Col)
+					primary.Col += len([]rune(input))
 				}
+
 			}
 		}
 
 		renderer.SetDrawColor(255, 255, 255, 255)
 		renderer.Clear()
 
-		y := int32(10) - scrollOffsetY
-		var cursorX, cursorY = int32(10), int32(10)
-
-		for row, line := range strings.Split(bufferText, "\n") {
-
-			x := int32(10)
-
-			runes := []rune(line)
-			for i := 0; i < len(runes); i++ {
-				s := string(runes[i])
-
-				if i < len(runes)-1 {
-					pair := string(runes[i]) + string(runes[i+1])
-					if contains(ligatures, pair) {
-						s = pair
-						i++ // Skip next rune
-					}
-				}
-
-				tx := atlas.GetTexture(s, renderer)
-				if tx == nil {
-					continue
-				}
-				_, _, w, h, _ := tx.Query()
-
-				if x+w > rw-50 {
-					x = 10 // Reset to start of line if it exceeds window width
-					y += int32(atlas.Size)
-				}
-
-				renderer.Copy(tx, nil, &sdl.Rect{X: int32(x), Y: int32(y), W: w, H: h})
-
-				x += w
-
-				if i+1 == curCol && row == curRow {
-					cursorX = x
-					cursorY = y
-				}
-			}
-
-			y += int32(atlas.Size)
-		}
-
-		renderer.SetDrawColor(0, 0, 0, 255)
-		renderer.FillRect(&sdl.Rect{X: cursorX, Y: cursorY, W: 4, H: int32(atlas.Size)})
+		RenderTextWithSelection(renderer, atlas, bufferText, cursorManager)
 
 		frameCount++
 		currentTime := sdl.GetTicks64()
@@ -285,6 +243,70 @@ func main() {
 	}
 }
 
+func RenderTextWithSelection(renderer *sdl.Renderer, atlas *GlyphAtlas, text string, cm *CursorManager) {
+	y := int32(10) - scrollOffsetY
+	primary := cm.GetPrimary()
+
+	for row, line := range strings.Split(text, "\n") {
+		x := int32(10)
+		runes := []rune(line)
+
+		chars := 0
+
+		for i := 0; i < len(runes); i++ {
+			s := string(runes[i])
+			chars++
+
+			// Handle ligatures
+			if i < len(runes)-1 {
+				pair := string(runes[i]) + string(runes[i+1])
+				if contains(ligatures, pair) {
+					s = pair
+					i++ // Skip next rune
+				}
+			}
+
+			// Check if this character is selected
+			isSelected := IsCharacterSelected(row, i, primary.Selection)
+
+			// Render selection background
+			if isSelected {
+				tx := atlas.GetTexture(s, renderer)
+				if tx != nil {
+					_, _, w, h, _ := tx.Query()
+					selectionRect := sdl.Rect{X: x, Y: y, W: w, H: h}
+					renderer.SetDrawColor(173, 216, 230, 128) // Light blue selection
+					renderer.FillRect(&selectionRect)
+				}
+			}
+
+			tx := atlas.GetTexture(s, renderer)
+			if tx == nil {
+				continue
+			}
+			_, _, w, h, _ := tx.Query()
+
+			if x+w > rw-50 {
+				x = 10 // Reset to start of line if it exceeds window width
+				y += int32(atlas.Size)
+			}
+
+			cm.SetRenderPos(row, i, x, y)
+			renderer.Copy(tx, nil, &sdl.Rect{X: int32(x), Y: int32(y), W: w, H: h})
+
+			// Render cursor(s)
+
+			x += w
+		}
+
+		cm.SetRenderPos(row, chars+1, x, y)
+
+		y += int32(atlas.Size)
+	}
+
+	RenderCursors(renderer, atlas, cm)
+}
+
 func insertAtCursor(text string, input string, row, col int) string {
 	lines := strings.Split(string(text), "\n")
 
@@ -300,6 +322,31 @@ func insertAtCursor(text string, input string, row, col int) string {
 	}
 
 	lines[row] = string(runes[:col]) + string(input) + string(runes[col:])
+	return strings.Join(lines, "\n")
+}
+
+func deleteFromEndOfLine(text string, row int) string {
+	lines := strings.Split(text, "\n")
+
+	if row < 0 || row >= len(lines) {
+		return text // Invalid row
+	}
+
+	line := lines[row]
+	runes := []rune(line)
+
+	if len(runes) == 0 {
+		// delete newline
+		if row > 0 {
+			lines[row-1] += lines[row]
+			lines = append(lines[:row], lines[row+1:]...) // Remove current line
+		} else {
+			return text
+		}
+		return strings.Join(lines, "\n")
+	}
+
+	lines[row] = string(runes[:len(runes)-1]) // Delete last character of the line
 	return strings.Join(lines, "\n")
 }
 
@@ -370,17 +417,23 @@ func GetRowColFromClick(x, y int32, sampleText string, atlas *GlyphAtlas, render
 			if curX <= x && curX+w > x &&
 				curY <= y && curY+int32(atlas.Size) > y {
 				fmt.Println("x:", x, "curX:", curX, "y:", y, "curY:", curY, "w:", w, "col:", col, "string(ch):", string(ch))
-				return row, col + 1
+				return row, col
 			}
 
 			curX += w
+		}
+
+		if curX < x && curY <= y &&
+			curY+int32(atlas.Size) > y {
+			fmt.Println("x:", x, "curX:", curX, "y:", y, "curY:", curY, "col:", col+1)
+			return row, len(runes) + 1 // Return the end of the line
 		}
 
 		curY += int32(atlas.Size)
 		curX = int32(10) // Reset X for the next line
 	}
 
-	return row, col + 1 // Return -1, -1 if no valid position found
+	return row, col // Return -1, -1 if no valid position found
 }
 
 func GetRealMousePos(x, y int32, window *sdl.Window, renderer *sdl.Renderer) (int32, int32) {
