@@ -10,17 +10,20 @@ import (
 )
 
 const (
-	fontPath    = "FiraCode-Regular.ttf"
-	fontSize    = 16
-	scrollSpeed = 10
+	fontPath        = "FiraCode-Regular.ttf"
+	fontSize        = 16
+	scrollSpeed     = 6
+	scrollLerpSpeed = 0.05 // smaller = slower
 )
 
 var (
 	zoom                = 2.0
 	scrollOffsetY int32 = 0
-	curCol              = 0
-	curRow              = 0
-	ligatures           = []string{
+
+	targetScrollOffsetY float32 = 0
+	actualScrollOffsetY float32 = 0
+
+	ligatures = []string{
 		"->", "=>", "<-", "<=", "==", "!=", "&&", "||", "++", "--",
 	}
 
@@ -89,11 +92,10 @@ func main() {
 			case *sdl.QuitEvent:
 				running = false
 			case *sdl.MouseWheelEvent:
-				scrollAmount := int32(e.Y) * int32(float64(atlas.Size)/2) * 3
-				scrollOffsetY -= scrollAmount
-				fmt.Println("Scroll offset:", scrollOffsetY, "Scroll amount:", scrollAmount)
-				if scrollOffsetY < 0 {
-					scrollOffsetY = 0
+				scrollAmount := float32(e.Y) * float32(atlas.Size) * scrollSpeed // adjust multiplier to taste
+				targetScrollOffsetY -= scrollAmount
+				if targetScrollOffsetY < 0 {
+					targetScrollOffsetY = 0
 				}
 			case *sdl.MouseButtonEvent:
 				if e.Type == sdl.MOUSEBUTTONDOWN && e.Button == sdl.BUTTON_LEFT {
@@ -161,7 +163,7 @@ func main() {
 							primary.Col--
 						}
 					case sdl.K_RIGHT:
-						if primary.Col <= len([]rune(strings.Split(bufferText, "\n")[curRow]))-1 {
+						if primary.Col <= len([]rune(strings.Split(bufferText, "\n")[primary.Row]))-1 {
 							r := strings.Split(bufferText, "\n")[primary.Row]
 							ol := len([]rune(r))
 							if ol-1 == primary.Col {
@@ -179,8 +181,8 @@ func main() {
 							primary.Col = 1
 						}
 					case sdl.K_TAB:
-						bufferText = insertAtCursor(bufferText, "    ", curRow, curCol) // Insert 4 spaces for tab
-						curCol += 4
+						bufferText = insertAtCursor(bufferText, "    ", primary.Row, primary.Col) // Insert 4 spaces for tab
+						primary.Col += 4
 					}
 				}
 				if e.Keysym.Sym == sdl.K_ESCAPE && e.State == sdl.PRESSED {
@@ -211,6 +213,10 @@ func main() {
 
 			}
 		}
+
+		delta := targetScrollOffsetY - actualScrollOffsetY
+		actualScrollOffsetY += delta * scrollLerpSpeed
+		scrollOffsetY = int32(actualScrollOffsetY + 0.5)
 
 		renderer.SetDrawColor(255, 255, 255, 255)
 		renderer.Clear()
