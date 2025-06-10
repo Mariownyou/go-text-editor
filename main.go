@@ -11,9 +11,9 @@ import (
 
 const (
 	fontPath        = "FiraCode-Regular.ttf"
-	fontSize        = 16
-	scrollSpeed     = 6
-	scrollLerpSpeed = 0.05 // smaller = slower
+	fontSize        = 14
+	scrollSpeed     = 100
+	scrollLerpSpeed = 0.1 // smaller = slower
 )
 
 var (
@@ -41,9 +41,10 @@ var isDragging = false
 
 func main() {
 	bufferText := "Hello, High-DPI World!\nasdadasda"
+	filePath := ""
 
 	if len(os.Args) > 1 {
-		filePath := os.Args[1]
+		filePath = os.Args[1]
 		data, err := os.ReadFile(filePath)
 		if err != nil {
 			fmt.Println("Error reading file:", err)
@@ -62,7 +63,14 @@ func main() {
 	}
 	defer ttf.Quit()
 
-	window, err := sdl.CreateWindow("HiDPI Text Viewer", sdl.WINDOWPOS_CENTERED, sdl.WINDOWPOS_CENTERED, 800, 600, sdl.WINDOW_ALLOW_HIGHDPI|sdl.WINDOW_RESIZABLE)
+	window, err := sdl.CreateWindow(
+		"HiDPI Text Viewer",
+		sdl.WINDOWPOS_CENTERED, sdl.WINDOWPOS_CENTERED, 800, 600,
+		sdl.WINDOW_ALLOW_HIGHDPI|sdl.WINDOW_RESIZABLE,
+	)
+
+	SetTitleBarColor(window)
+
 	if err != nil {
 		panic(err)
 	}
@@ -73,7 +81,7 @@ func main() {
 
 	// set white background
 	r, _ := window.GetRenderer()
-	r.SetDrawColor(255, 255, 255, 255)
+	setColor(r, uiBackgroundColor)
 
 	renderer, err := sdl.CreateRenderer(window, -1, sdl.RENDERER_ACCELERATED|sdl.RENDERER_PRESENTVSYNC)
 	if err != nil {
@@ -98,7 +106,7 @@ func main() {
 					rw, _, _ = renderer.GetOutputSize()
 				}
 			case *sdl.MouseWheelEvent:
-				scrollAmount := float32(e.Y) * float32(atlas.Size) * scrollSpeed // adjust multiplier to taste
+				scrollAmount := float32(e.Y) * scrollSpeed // adjust multiplier to taste
 				targetScrollOffsetY -= scrollAmount
 				if targetScrollOffsetY < 0 {
 					targetScrollOffsetY = 0
@@ -116,6 +124,7 @@ func main() {
 
 				if e.Type == sdl.MOUSEBUTTONDOWN {
 					if !primary.Selection.Active {
+						isDragging = true
 						// Start new selection from current cursor position
 						primary.Selection.StartRow = row
 						primary.Selection.StartCol = col
@@ -127,6 +136,7 @@ func main() {
 						cursorManager.ClearAllSelections()
 						primary.Selection.Active = false
 					}
+					isDragging = false
 
 					if primary.Selection.Active && (primary.Selection.StartRow != row || primary.Selection.StartCol != col) {
 						primary.Selection.EndRow = row
@@ -134,13 +144,13 @@ func main() {
 					}
 				}
 			case *sdl.MouseMotionEvent:
-				if e.State == sdl.PRESSED {
-					isDragging = true
-				} else {
-					isDragging = false
-				}
+				// if e.State == sdl.PRESSED {
+				// 	isDragging = true
+				// } else {
+				// 	isDragging = false
+				// }
 
-				if isDragging {
+				if isDragging || e.State == sdl.PRESSED {
 					x, y := e.X, e.Y
 					x, y = GetRealMousePos(x, y, window, renderer)
 					y += scrollOffsetY
@@ -157,8 +167,8 @@ func main() {
 					}
 				}
 			case *sdl.KeyboardEvent:
+				primary := cursorManager.GetPrimary()
 				if e.Type == sdl.KEYDOWN {
-					primary := cursorManager.GetPrimary()
 					switch e.Keysym.Sym {
 					case sdl.K_BACKSPACE:
 						if cursorManager.HasSelection() {
@@ -169,7 +179,7 @@ func main() {
 						or := strings.Split(bufferText, "\n")[primary.Row]
 						ol := len([]rune(or))
 						bufferText = deleteAtCursor(bufferText, primary.Row, primary.Col)
-						if primary.Col > 0 {
+						if primary.Col > 0 || primary.Row == 0 {
 							primary.Col--
 						} else {
 							nr := strings.Split(bufferText, "\n")[primary.Row-1]
@@ -217,6 +227,42 @@ func main() {
 					}
 					atlas.Destroy()
 					atlas = NewGlyphAtlas(renderer, fontPath, int(float64(fontSize)*zoom))
+				} else if e.Keysym.Sym == sdl.K_v && e.Keysym.Mod&uint16(sdl.KMOD_GUI) != 0 && e.State == sdl.PRESSED {
+					fmt.Println("Paste from clipboard")
+					clipboardText, err := sdl.GetClipboardText()
+					if err != nil {
+						fmt.Println("Error getting clipboard text:", err)
+						continue
+					}
+					if clipboardText != "" {
+						if cursorManager.HasSelection() {
+							bufferText = DeleteSelectedText(bufferText, cursorManager)
+							cursorManager.ClearAllSelections()
+						}
+						old := strings.Split(bufferText, "\n")
+						ol := len([]rune(old[primary.Row]))
+						bufferText = insertAtCursor(bufferText, clipboardText, primary.Row, primary.Col)
+						lines := strings.Split(clipboardText, "\n")
+						ll := len(lines)
+						primary.Col = ol + len([]rune(lines[ll-1]))
+						primary.Row += ll - 1 // Move to the last line of the pasted text
+					}
+				} else if e.Keysym.Sym == sdl.K_a && e.Keysym.Mod&uint16(sdl.KMOD_GUI) != 0 && e.State == sdl.PRESSED {
+					fmt.Println("Select all")
+					cursorManager.ClearAllSelections()
+					primary.Selection.Active = true
+					primary.Selection.StartRow = 0
+					primary.Selection.StartCol = 0
+					primary.Selection.EndRow = len(strings.Split(bufferText, "\n")) - 1
+					primary.Selection.EndCol = len([]rune(strings.Split(bufferText, "\n")[primary.Selection.EndRow]))
+					primary.Row = primary.Selection.EndRow
+					primary.Col = primary.Selection.EndCol
+				} else if e.Keysym.Sym == sdl.K_e && e.Keysym.Mod&uint16(sdl.KMOD_CTRL) != 0 && e.State == sdl.PRESSED {
+					fmt.Println("move to end of line")
+					if primary.Row < len(strings.Split(bufferText, "\n")) {
+						line := strings.Split(bufferText, "\n")[primary.Row]
+						primary.Col = len([]rune(line))
+					}
 				}
 			case *sdl.TextInputEvent:
 				input := e.GetText()
@@ -235,9 +281,9 @@ func main() {
 
 		delta := targetScrollOffsetY - actualScrollOffsetY
 		actualScrollOffsetY += delta * scrollLerpSpeed
-		scrollOffsetY = int32(actualScrollOffsetY + 0.5)
+		scrollOffsetY = int32(actualScrollOffsetY + 0.5) //- uiHeight*5
 
-		renderer.SetDrawColor(255, 255, 255, 255)
+		setColor(renderer, uiBackgroundColor)
 		renderer.Clear()
 
 		RenderTextWithSelection(renderer, atlas, bufferText, cursorManager)
@@ -250,18 +296,8 @@ func main() {
 			lastFPSUpdate = currentTime
 		}
 
-		fpsText := fmt.Sprintf("FPS: %d", fps)
-		fpsTexture := atlas.GetTexture(fpsText, renderer)
-		if fpsTexture != nil {
-			_, _, w, h, _ := fpsTexture.Query()
-			rw, _, _ := renderer.GetOutputSize()
-			fpsX := rw - w - 10 // 10 pixels from the right edge
-			// white background for FPS text
-			rect := sdl.Rect{X: fpsX - 5, Y: 5, W: w + 10, H: h + 5}
-			renderer.SetDrawColor(255, 255, 255, 200)
-			renderer.FillRect(&rect)
-			renderer.Copy(fpsTexture, nil, &sdl.Rect{X: fpsX, Y: 10, W: w, H: h})
-		}
+		// DrawTabs(renderer, atlas, []string{filePath})
+		DrawFPS(renderer, atlas, fps)
 
 		renderer.Present()
 		sdl.Delay(4)
@@ -350,31 +386,6 @@ func insertAtCursor(text string, input string, row, col int) string {
 	return strings.Join(lines, "\n")
 }
 
-func deleteFromEndOfLine(text string, row int) string {
-	lines := strings.Split(text, "\n")
-
-	if row < 0 || row >= len(lines) {
-		return text // Invalid row
-	}
-
-	line := lines[row]
-	runes := []rune(line)
-
-	if len(runes) == 0 {
-		// delete newline
-		if row > 0 {
-			lines[row-1] += lines[row]
-			lines = append(lines[:row], lines[row+1:]...) // Remove current line
-		} else {
-			return text
-		}
-		return strings.Join(lines, "\n")
-	}
-
-	lines[row] = string(runes[:len(runes)-1]) // Delete last character of the line
-	return strings.Join(lines, "\n")
-}
-
 func deleteAtCursor(text string, row, col int) string {
 	lines := strings.Split(text, "\n")
 
@@ -425,7 +436,7 @@ func GetRowColFromClick(x, y int32, sampleText string, atlas *GlyphAtlas, render
 
 		runes := []rune(line)
 
-		// handle empty lines or end of lines
+		// handle empty lines
 		if len(runes) == 0 {
 			if curY <= y && curY+int32(atlas.Size+atlas.Size/3) > y {
 				fmt.Println("Empty line clicked at row:", row, "col:", col)
