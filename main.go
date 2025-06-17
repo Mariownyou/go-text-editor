@@ -39,9 +39,23 @@ var (
 var cursorManager = NewCursorManager()
 var isDragging = false
 
+func saveBufferToFile(bufferText string, filePath string) error {
+	if filePath == "" {
+		filePath = "buffer.txt"
+	}
+	data := []byte(bufferText)
+	err := os.WriteFile(filePath, data, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to save buffer to file: %w", err)
+	}
+	return nil
+}
+
 func main() {
-	bufferText := "Hello, High-DPI World!\nasdadasda"
+	bufferText := ""
 	filePath := ""
+
+	buffer := NewBuffer()
 
 	if len(os.Args) > 1 {
 		filePath = os.Args[1]
@@ -51,7 +65,18 @@ func main() {
 			return
 		}
 		bufferText = string(data)
+	} else {
+		// read from buffer.txt if no file is provided
+		data, err := os.ReadFile("buffer.txt")
+		if err != nil {
+			fmt.Println("Error reading buffer.txt:", err)
+			bufferText = "Hello, High-DPI World!\nasdadasda"
+		} else {
+			bufferText = string(data)
+		}
 	}
+
+	buffer.SetContent(bufferText)
 
 	if err := sdl.Init(sdl.INIT_VIDEO); err != nil {
 		panic(err)
@@ -99,6 +124,9 @@ func main() {
 		for event := sdl.PollEvent(); event != nil; event = sdl.PollEvent() {
 			switch e := event.(type) {
 			case *sdl.QuitEvent:
+				if filePath == "" {
+					saveBufferToFile(buffer.Content, "")
+				}
 				running = false
 			case *sdl.WindowEvent:
 				if e.Event == sdl.WINDOWEVENT_RESIZED || e.Event == sdl.WINDOWEVENT_SIZE_CHANGED {
@@ -119,11 +147,12 @@ func main() {
 				x, y := e.X, e.Y
 				x, y = GetRealMousePos(x, y, window, renderer)
 				y += scrollOffsetY // Adjust for scroll offset
-				row, col := GetRowColFromClick(x, y, bufferText, atlas, renderer)
+				row, col := GetRowColFromClick(x, y, buffer.Content, atlas, renderer)
 				primary := cursorManager.GetPrimary()
 
 				if e.Type == sdl.MOUSEBUTTONDOWN {
-					if !primary.Selection.Active {
+					if !primary.Selection.Active && !isDragging ||
+						(primary.Selection.Active && (primary.Selection.StartRow != row || primary.Selection.StartCol != col)) {
 						isDragging = true
 						// Start new selection from current cursor position
 						primary.Selection.StartRow = row
@@ -144,17 +173,11 @@ func main() {
 					}
 				}
 			case *sdl.MouseMotionEvent:
-				// if e.State == sdl.PRESSED {
-				// 	isDragging = true
-				// } else {
-				// 	isDragging = false
-				// }
-
-				if isDragging || e.State == sdl.PRESSED {
+				if e.State == sdl.PRESSED {
 					x, y := e.X, e.Y
 					x, y = GetRealMousePos(x, y, window, renderer)
 					y += scrollOffsetY
-					row, col := GetRowColFromClick(x, y, bufferText, atlas, renderer)
+					row, col := GetRowColFromClick(x, y, buffer.Content, atlas, renderer)
 
 					primary := cursorManager.GetPrimary()
 					primary.Selection.Active = true
@@ -172,17 +195,17 @@ func main() {
 					switch e.Keysym.Sym {
 					case sdl.K_BACKSPACE:
 						if cursorManager.HasSelection() {
-							bufferText = DeleteSelectedText(bufferText, cursorManager)
+							buffer.SetContent(DeleteSelectedText(buffer.Content, cursorManager))
 							cursorManager.ClearAllSelections()
 							continue
 						}
-						or := strings.Split(bufferText, "\n")[primary.Row]
+						or := strings.Split(buffer.Content, "\n")[primary.Row]
 						ol := len([]rune(or))
-						bufferText = deleteAtCursor(bufferText, primary.Row, primary.Col)
+						buffer.SetContent(deleteAtCursor(buffer.Content, primary.Row, primary.Col))
 						if primary.Col > 0 || primary.Row == 0 {
 							primary.Col--
 						} else {
-							nr := strings.Split(bufferText, "\n")[primary.Row-1]
+							nr := strings.Split(buffer.Content, "\n")[primary.Row-1]
 							nl := len([]rune(nr))
 							primary.Row--
 							primary.Col = nl - ol
@@ -193,7 +216,7 @@ func main() {
 							primary.Col = 0 // Reset column to 0 when moving up
 						}
 					case sdl.K_DOWN:
-						if primary.Row < len(strings.Split(bufferText, "\n"))-1 {
+						if primary.Row < len(strings.Split(buffer.Content, "\n"))-1 {
 							primary.Row++
 							primary.Col = 0 // Reset column to 0 when moving down
 						}
@@ -202,15 +225,15 @@ func main() {
 							primary.Col--
 						}
 					case sdl.K_RIGHT:
-						if primary.Col <= len([]rune(strings.Split(bufferText, "\n")[primary.Row]))-1 {
+						if primary.Col <= len([]rune(strings.Split(buffer.Content, "\n")[primary.Row]))-1 {
 							primary.Col++
 						}
 					case sdl.K_RETURN:
-						bufferText = insertAtCursor(bufferText, "\n", primary.Row, primary.Col)
+						buffer.SetContent(insertAtCursor(buffer.Content, "\n", primary.Row, primary.Col))
 						primary.Row++
 						primary.Col = 0
 					case sdl.K_TAB:
-						bufferText = insertAtCursor(bufferText, "    ", primary.Row, primary.Col) // Insert 4 spaces for tab
+						buffer.SetContent(insertAtCursor(buffer.Content, "    ", primary.Row, primary.Col)) // Insert 4 spaces for tab
 						primary.Col += 4
 					}
 				}
@@ -236,12 +259,12 @@ func main() {
 					}
 					if clipboardText != "" {
 						if cursorManager.HasSelection() {
-							bufferText = DeleteSelectedText(bufferText, cursorManager)
+							buffer.SetContent(DeleteSelectedText(buffer.Content, cursorManager))
 							cursorManager.ClearAllSelections()
 						}
-						old := strings.Split(bufferText, "\n")
+						old := strings.Split(buffer.Content, "\n")
 						ol := len([]rune(old[primary.Row]))
-						bufferText = insertAtCursor(bufferText, clipboardText, primary.Row, primary.Col)
+						buffer.SetContent(insertAtCursor(buffer.Content, clipboardText, primary.Row, primary.Col))
 						lines := strings.Split(clipboardText, "\n")
 						ll := len(lines)
 						primary.Col = ol + len([]rune(lines[ll-1]))
@@ -253,14 +276,29 @@ func main() {
 					primary.Selection.Active = true
 					primary.Selection.StartRow = 0
 					primary.Selection.StartCol = 0
-					primary.Selection.EndRow = len(strings.Split(bufferText, "\n")) - 1
-					primary.Selection.EndCol = len([]rune(strings.Split(bufferText, "\n")[primary.Selection.EndRow]))
+					primary.Selection.EndRow = len(strings.Split(buffer.Content, "\n")) - 1
+					primary.Selection.EndCol = len([]rune(strings.Split(buffer.Content, "\n")[primary.Selection.EndRow]))
 					primary.Row = primary.Selection.EndRow
 					primary.Col = primary.Selection.EndCol
+				} else if e.Keysym.Sym == sdl.K_z && e.Keysym.Mod&uint16(sdl.KMOD_GUI) != 0 && e.State == sdl.PRESSED {
+					fmt.Println("Undo last change")
+					if buffer.Undo() {
+						// Update cursor position after undo
+						primary := cursorManager.GetPrimary()
+						lines := strings.Split(buffer.Content, "\n")
+						if primary.Row >= len(lines) {
+							primary.Row = len(lines) - 1
+						}
+						if primary.Col > len([]rune(lines[primary.Row])) {
+							primary.Col = len([]rune(lines[primary.Row]))
+						}
+					} else {
+						fmt.Println("No more undos available")
+					}
 				} else if e.Keysym.Sym == sdl.K_e && e.Keysym.Mod&uint16(sdl.KMOD_CTRL) != 0 && e.State == sdl.PRESSED {
 					fmt.Println("move to end of line")
-					if primary.Row < len(strings.Split(bufferText, "\n")) {
-						line := strings.Split(bufferText, "\n")[primary.Row]
+					if primary.Row < len(strings.Split(buffer.Content, "\n")) {
+						line := strings.Split(buffer.Content, "\n")[primary.Row]
 						primary.Col = len([]rune(line))
 					}
 				}
@@ -269,10 +307,10 @@ func main() {
 				if input != "" {
 					primary := cursorManager.GetPrimary()
 					if cursorManager.HasSelection() {
-						bufferText = DeleteSelectedText(bufferText, cursorManager)
+						buffer.SetContent(DeleteSelectedText(buffer.Content, cursorManager))
 						cursorManager.ClearAllSelections()
 					}
-					bufferText = insertAtCursor(bufferText, input, primary.Row, primary.Col)
+					buffer.SetContent(insertAtCursor(buffer.Content, input, primary.Row, primary.Col))
 					primary.Col += len([]rune(input))
 				}
 
@@ -286,7 +324,7 @@ func main() {
 		setColor(renderer, uiBackgroundColor)
 		renderer.Clear()
 
-		RenderTextWithSelection(renderer, atlas, bufferText, cursorManager)
+		RenderTextWithSelection(renderer, atlas, buffer.Content, cursorManager)
 
 		frameCount++
 		currentTime := sdl.GetTicks64()
